@@ -16,6 +16,9 @@ app.get('/health', (req, res) => {
     });
 });
 
+//other routes
+
+
 app.listen(PORT, () => {
   console.log(`Toursafe backend running on http://localhost:${PORT}`);
 });
