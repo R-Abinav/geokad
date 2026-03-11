@@ -1,6 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'screens/home_screen.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+    ),
+  );
   runApp(const TourSafeApp());
 }
 
@@ -12,39 +22,20 @@ class TourSafeApp extends StatelessWidget {
     return MaterialApp(
       title: 'Tour Safe',
       debugShowCheckedModeBanner: false,
-      home: const HomePage(),
-    );
-  }
-}
-
-class HomePage extends StatelessWidget {
-  const HomePage({super.key});
-
-  void sendSOS() {
-    print("SOS Button Pressed");
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Tour Safe"),
-        centerTitle: true,
-        backgroundColor: Colors.lightGreen,
-      ),
-      body: Center(
-        child: ElevatedButton(
-          onPressed: sendSOS,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.red,
-            padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 20),
-          ),
-          child: const Text(
-            "SOS",
-            style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
-          ),
+      theme: ThemeData(
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: const Color(0xFF0D1B2A),
+        colorScheme: const ColorScheme.dark(
+          primary: Color(0xFF00D4AA),
+          secondary: Color(0xFFFF3B30),
+          surface: Color(0xFF132236),
         ),
+        textTheme: GoogleFonts.outfitTextTheme(
+          ThemeData.dark().textTheme,
+        ),
+        useMaterial3: true,
       ),
+      home: const HomeScreen(),
     );
   }
 }
