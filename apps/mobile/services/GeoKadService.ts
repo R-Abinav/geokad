@@ -4,11 +4,13 @@
 
 type SOSHandler = (event: any) => void;
 type PeerCountHandler = (count: number) => void;
+type SosAckHandler = (peersNotified: number) => void;
 
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 const sosHandlers: SOSHandler[] = [];
 const peerCountHandlers: PeerCountHandler[] = [];
+const sosAckHandlers: SosAckHandler[] = [];
 const seen = new Set<string>();
 let _relayAddress: string | null = null;
 let _connected = false;
@@ -60,6 +62,7 @@ function _doConnect(relayAddress: string): void {
           }
         } else if (msg.type === 'sos_ack') {
           console.log(`✅ SOS acknowledged, ${msg.peersNotified} peers notified`);
+          sosAckHandlers.forEach(h => h(msg.peersNotified));
         } else if (msg.type === 'peers') {
           _peerCount = msg.count;
           peerCountHandlers.forEach(h => h(msg.count));
@@ -129,6 +132,10 @@ export function onPeerCount(handler: PeerCountHandler): void {
   peerCountHandlers.push(handler);
 }
 
+export function onSosAck(handler: SosAckHandler): void {
+  sosAckHandlers.push(handler);
+}
+
 export function isConnected(): boolean {
   return _connected;
 }
@@ -147,4 +154,4 @@ export function disconnect(): void {
   _connected = false;
 }
 
-export default { connectToRelay, sendSOS, onSOS, onPeerCount, isConnected, getPeerCount, disconnect };
+export default { connectToRelay, sendSOS, onSOS, onPeerCount, onSosAck, isConnected, getPeerCount, disconnect };

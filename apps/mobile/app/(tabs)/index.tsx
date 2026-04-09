@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import SOSButton from '../../components/SOSButton';
 import { useSosStore } from '../../store/useSosStore';
-import { connectToRelay, isConnected, getPeerCount, onPeerCount, onSOS } from '../../services/GeoKadService';
+import { connectToRelay, isConnected, getPeerCount, onPeerCount, onSOS, onSosAck } from '../../services/GeoKadService';
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -12,6 +12,7 @@ export default function HomeScreen() {
   
   const buttonRef = useRef<View>(null);
   const setIntroSosCenterY = useSosStore(s => s.setIntroSosCenterY);
+  const setPeersNotified = useSosStore(s => s.setPeersNotified);
   const [relayInput, setRelayInput] = useState('');
   const [connected, setConnected] = useState(false);
   const [peerCount, setPeerCount] = useState(0);
@@ -44,6 +45,11 @@ export default function HomeScreen() {
     onPeerCount((count) => {
       setPeerCount(count);
       setConnected(true);
+    });
+
+    // Listen for SOS acks to update notified count
+    onSosAck((notifiedCount) => {
+      setPeersNotified(notifiedCount);
     });
 
     return () => clearInterval(statusInterval);

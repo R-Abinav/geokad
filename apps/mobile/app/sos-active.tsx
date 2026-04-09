@@ -21,12 +21,8 @@ export default function SosActiveScreen() {
       ])
     ).start();
 
-    // Simulate peer notification count increasing
-    const interval = setInterval(() => {
-      incrementPeers();
-    }, 2000);
-
-    return () => clearInterval(interval);
+    // Notification count is updated via the store when a 'sos_ack' or 'peers' event is received.
+    return () => {};
   }, []);
 
   const handleCancel = () => {
