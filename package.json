@@ -22,5 +22,15 @@
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "overrides": {
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  },
+  "dependencies": {
+    "metro-runtime": "^0.84.2",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-native-reanimated": "^3.16.7"
   }
 }

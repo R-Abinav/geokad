@@ -2,6 +2,7 @@ import net from "net";
 import { Bonjour, Service } from "bonjour-service";
 
 const SERVICE_TYPE = "toursafe-p2p";
+
 interface PeerOptions {
   name: string;
   port?: number;

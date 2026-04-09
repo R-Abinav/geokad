@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>geokad visualizer</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0a0f1e;
+    color: #c9d1e8;
+    font-family: monospace;
+    overflow: hidden;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* top bar */
+  #topbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px;
+    background: #0d1326;
+    border-bottom: 1px solid #1e2a44;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+
+  #topbar label {
+    font-size: 12px;
+    color: #8899bb;
+  }
+
+  #topbar select, #topbar button {
+    background: #141c30;
+    color: #c9d1e8;
+    border: 1px solid #2a3a5e;
+    padding: 5px 10px;
+    font-family: monospace;
+    font-size: 12px;
+    cursor: pointer;
+    border-radius: 3px;
+  }
+
+  #topbar button:hover {
+    background: #1e2d4e;
+  }
+
+  #btn-send { border-color: #27ae60; color: #27ae60; }
+  #btn-send:hover { background: #1a3a28; }
+  #btn-kill { border-color: #e74c3c; color: #e74c3c; }
+  #btn-kill:hover { background: #3a1a1a; }
+  #btn-reset { border-color: #8899bb; color: #8899bb; }
+
+  #btn-lora {
+    border-color: #3a3a4e;
+    color: #555570;
+    background: #111827;
+    transition: border-color 0.2s, color 0.2s, box-shadow 0.2s;
+  }
+  #btn-lora.on {
+    border-color: #f5a623;
+    color: #f5a623;
+    background: #2a1d08;
+    box-shadow: 0 0 8px rgba(245, 166, 35, 0.45);
+  }
+
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #8899bb;
+    margin-left: auto;
+  }
+
+  .toggle-row input[type="checkbox"] {
+    accent-color: #2057a7;
+    cursor: pointer;
+  }
+
+  /* main area */
+  #main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  canvas {
+    flex: 1;
+    display: block;
+    cursor: default;
+  }
+
+  /* info panel */
+  #info-panel {
+    width: 260px;
+    background: #0d1326;
+    border-left: 1px solid #1e2a44;
+    padding: 12px;
+    overflow-y: auto;
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+
+  #info-panel h3 {
+    color: #5577cc;
+    margin-bottom: 10px;
+    font-size: 13px;
+    border-bottom: 1px solid #1e2a44;
+    padding-bottom: 6px;
+  }
+
+  #info-log {
+    color: #aabbdd;
+    line-height: 1.8;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
+  .log-hop { color: #f39c12; }
+  .log-reroute { color: #e67e22; }
+  .log-summary { color: #27ae60; margin-top: 8px; }
+  .log-aodv { color: #e74c3c; }
+  .log-saved { color: #8ecaff; }
+
+
+
+  /* tooltip */
+  #tooltip {
+    position: fixed;
+    background: #141c30;
+    border: 1px solid #2a3a5e;
+    padding: 8px 10px;
+    font-size: 11px;
+    font-family: monospace;
+    color: #c9d1e8;
+    pointer-events: none;
+    display: none;
+    z-index: 100;
+    border-radius: 4px;
+    line-height: 1.7;
+    max-width: 220px;
+  }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <label>source node:</label>
+  <select id="sel-source"></select>
+  <label>mode:</label>
+  <select id="sel-mode">
+    <option value="geokad">geo kad</option>
+    <option value="broadcast">broadcast</option>
+  </select>
+  <button id="btn-send">send sos</button>
+  <button id="btn-kill">kill node</button>
+  <button id="btn-reset">reset</button>
+  <button id="btn-lora">lora: off</button>
+  <div class="toggle-row">
+    <input type="checkbox" id="chk-range">
+    <label for="chk-range">show range circles</label>
+  </div>
+</div>
+
+<div id="main">
+  <canvas id="canvas"></canvas>
+  <div id="info-panel">
+    <h3>routing info</h3>
+    <div id="info-log">select source and press send sos.</div>
+  </div>
+</div>
+
+
+
+<div id="tooltip"></div>
+
+<script>
+//raw node data
+const NODE_DEFS = [
+  { name: "chris",   lat: 13.08, lon: 80.27, port: 3001 },
+  { name: "harish",  lat: 12.97, lon: 77.59, port: 3002 },
+  { name: "abinav",  lat: 17.38, lon: 78.48, port: 3003 },
+  { name: "uday",    lat: 15.31, lon: 75.71, port: 3004 },
+  { name: "sree",    lat: 11.01, lon: 76.95, port: 3005 },
+  { name: "monissh", lat: 14.52, lon: 79.31, port: 3006 },
+];
+
+const PROXIMITY_PX = 220;
+const NODE_RADIUS  = 22;
+const COLORS = {
+  idle:      "#2057a7",
+  routing:   "#27ae60",
+  dead:      "#e74c3c",
+  receiving: "#f39c12",
+};
+
+//compute simple deterministic numeric id from lat/lon
+function computeNodeId(lat, lon) {
+  //scale lat/lon to integers and combine
+  const a = Math.round(lat * 1000);
+  const b = Math.round(lon * 1000);
+  //mixing to get a consistent number
+  return Math.abs((a * 100003 + b * 999983) & 0x7fffffff);
+}
+
+//build nodes array
+const canvas = document.getElementById("canvas");
+const ctx    = canvas.getContext("2d");
+const PADDING = 80;
+
+let nodes = [];
+let animating = false;
+let routeLines = []; // [{x1,y1,x2,y2,alpha,ts}]
+let travelDot  = null; // {x,y,tx,ty,startTime,duration,hopIndex}
+let hopQueue   = [];
+let hopsDone   = 0;
+let infoLines  = [];
+let showRange    = false;
+let loraEnabled  = false;
+const LORA_RANGE = 400;
+let geokadHops   = 0;
+let aodvBcasts   = 0;
+let fadeTimer    = null;
+
+function initNodes() {
+  const lats = NODE_DEFS.map(n => n.lat);
+  const lons = NODE_DEFS.map(n => n.lon);
+  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+  const minLon = Math.min(...lons), maxLon = Math.max(...lons);
+
+  const W = canvas.width  - PADDING * 2;
+  const H = canvas.height - PADDING * 2;
+
+  nodes = NODE_DEFS.map((def, i) => {
+    const nid = computeNodeId(def.lat, def.lon);
+    //normalize lat to y (invert since lat increases north but y increases down)
+    const nx = (def.lon - minLon) / (maxLon - minLon);
+    const ny = 1 - (def.lat - minLat) / (maxLat - minLat);
+    return {
+      id:     nid,
+      hexId:  nid.toString(16).padStart(8, "0"),
+      name:   def.name,
+      lat:    def.lat,
+      lon:    def.lon,
+      port:   def.port,
+      x:      PADDING + nx * W,
+      y:      PADDING + ny * H,
+      state:  "idle", //idle | routing | dead | receiving
+      dead:   false,
+    };
+  });
+}
+
+function resizeCanvas() {
+  //use parent clientWidth so flex layout is already applied
+  const p = canvas.parentElement;
+  canvas.width  = p.clientWidth  || window.innerWidth - 260;
+  canvas.height = p.clientHeight || window.innerHeight - 34;
+  initNodes();
+  draw();
+}
+
+//xor distance between two node numeric ids
+function xorDist(a, b) {
+  return a ^ b;
+}
+
+//euclidean pixel distance
+function pixDist(a, b) {
+  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+}
+
+//returns effective proximity radius for a node (expanded when lora is on for selected node)
+function nodeRange(node) {
+  if (!loraEnabled) return PROXIMITY_PX;
+  const sel = getSelectedNode();
+  return (sel && node.id === sel.id) ? LORA_RANGE : PROXIMITY_PX;
+}
+
+//kbucket contacts for tooltip: nodes within proximity, sorted by xor
+function kbucketContacts(node) {
+  return nodes
+    .filter(n => n.id !== node.id && !n.dead)
+    .filter(n => pixDist(node, n) <= nodeRange(node))
+    .sort((a, b) => xorDist(node.id, a.id) - xorDist(node.id, b.id))
+    .map(n => n.name);
+}
+
+//sos routing: greedy kademlia-style hop through proximity graph
+function computeRoute(sourceId) {
+  const src = nodes.find(n => n.id === sourceId && !n.dead);
+  if (!src) return [];
+
+  const visited = new Set([src.id]);
+  const hops = [];
+  let current = src;
+
+  while (true) {
+    //find unvisited alive nodes within range, sorted by xor distance
+    const candidates = nodes
+      .filter(n => !n.dead && !visited.has(n.id))
+      .filter(n => pixDist(current, n) <= nodeRange(current))
+      .sort((a, b) => xorDist(current.id, a.id) - xorDist(current.id, b.id));
+
+    if (candidates.length === 0) break;
+
+    const next = candidates[0];
+    visited.add(next.id);
+    hops.push({ from: current, to: next, dist: xorDist(current.id, next.id) });
+    current = next;
+  }
+
+  return hops;
+}
+
+//populate source selector
+function populateSelector() {
+  const sel = document.getElementById("sel-source");
+  sel.innerHTML = "";
+  nodes.filter(n => !n.dead).forEach(n => {
+    const opt = document.createElement("option");
+    opt.value = n.id;
+    opt.textContent = n.name;
+    sel.appendChild(opt);
+  });
+}
+
+function getSelectedNode() {
+  const sel = document.getElementById("sel-source");
+  const id = parseInt(sel.value);
+  return nodes.find(n => n.id === id);
+}
+
+//info panel
+function setInfoLines(lines) {
+  infoLines = lines;
+  const el = document.getElementById("info-log");
+  el.innerHTML = lines.map(l => {
+    if (l.type === "hop")     return `<span class="log-hop">${l.text}</span>`;
+    if (l.type === "reroute") return `<span class="log-reroute">${l.text}</span>`;
+    if (l.type === "summary") return `<span class="log-summary">${l.text}</span>`;
+    if (l.type === "aodv")    return `<span class="log-aodv">${l.text}</span>`;
+    if (l.type === "saved")   return `<span class="log-saved">${l.text}</span>`;
+    return `<span>${l.text}</span>`;
+  }).join("\n");
+}
+
+
+
+//animation loop
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const now = Date.now();
+
+  //prune old route lines (fade after 4s)
+  routeLines = routeLines.filter(l => now - l.ts < 4000);
+
+  //draw range circles
+  if (showRange) {
+    nodes.filter(n => !n.dead).forEach(n => {
+      const r = nodeRange(n);
+      const isLora = loraEnabled && r > PROXIMITY_PX;
+      ctx.beginPath();
+      ctx.strokeStyle = isLora ? "rgba(245, 166, 35, 0.85)" : "rgba(80, 180, 255, 0.75)";
+      ctx.lineWidth = isLora ? 2 : 1.5;
+      ctx.setLineDash([5, 5]);
+      ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      //inner fill glow
+      const rg = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, r);
+      rg.addColorStop(0, isLora ? "rgba(245, 166, 35, 0.00)" : "rgba(80, 180, 255, 0.00)");
+      rg.addColorStop(1, isLora ? "rgba(245, 166, 35, 0.06)" : "rgba(80, 180, 255, 0.07)");
+      ctx.fillStyle = rg;
+      ctx.fill();
+    });
+  }
+
+  //draw route lines
+  routeLines.forEach(l => {
+    const age   = now - l.ts;
+    const alpha = Math.max(0, 1 - age / 4000);
+    ctx.beginPath();
+    ctx.strokeStyle = l.reroute
+      ? `rgba(230, 126, 34, ${alpha * 0.75})`
+      : `rgba(39, 174, 96, ${alpha * 0.65})`;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.moveTo(l.x1, l.y1);
+    ctx.lineTo(l.x2, l.y2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  });
+
+  //draw nodes
+  nodes.forEach(n => {
+    const color = COLORS[n.dead ? "dead" : n.state];
+
+    //glow effect
+    const grad = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, NODE_RADIUS * 1.8);
+    grad.addColorStop(0, color + "55");
+    grad.addColorStop(1, "transparent");
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, NODE_RADIUS * 1.8, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    //node circle
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, NODE_RADIUS, 0, Math.PI * 2);
+    ctx.fillStyle = color + "22";
+    ctx.fill();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    //label: name
+    ctx.fillStyle = "#e0e8ff";
+    ctx.font = "bold 11px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(n.name, n.x, n.y - 4);
+
+    //label: short hex id
+    ctx.fillStyle = "#5577cc";
+    ctx.font = "9px monospace";
+    ctx.fillText(n.hexId.slice(0, 6), n.x, n.y + 9);
+  });
+
+  //traveling dot
+  if (travelDot) {
+    const elapsed = now - travelDot.startTime;
+    const t = Math.min(elapsed / travelDot.duration, 1);
+    const cx = travelDot.x  + (travelDot.tx - travelDot.x)  * t;
+    const cy = travelDot.y  + (travelDot.ty - travelDot.y)  * t;
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+    ctx.fillStyle = "#f39c12";
+    ctx.fill();
+
+    if (t >= 1) {
+      travelDot = null;
+      //advance to next hop
+      advanceHop();
+    }
+  }
+
+  if (animating || routeLines.length > 0 || travelDot) {
+    requestAnimationFrame(draw);
+  }
+}
+
+let hopIndex = 0;
+let currentHops = [];
+
+function startRouting() {
+  if (animating) return;
+
+  const src = getSelectedNode();
+  if (!src) return;
+
+  console.log("routing started from", src.name);
+
+  //reset states
+  nodes.forEach(n => { if (!n.dead) n.state = "idle"; });
+  routeLines = [];
+  travelDot  = null;
+  hopIndex   = 0;
+  hopsDone   = 0;
+
+  currentHops = computeRoute(src.id);
+
+  if (currentHops.length === 0) {
+    setInfoLines([
+      { text: `routing from: ${src.name}`, type: "plain" },
+      { text: "no reachable nodes within range.", type: "plain" },
+    ]);
+    draw();
+    return;
+  }
+
+  src.state = "routing";
+  animating = true;
+
+  const logLines = [{ text: `routing from: ${src.name}`, type: "plain" }];
+  setInfoLines(logLines);
+
+  requestAnimationFrame(draw);
+
+  //kick off first hop
+  setTimeout(() => advanceHop(), 300);
+}
+
+function advanceHop() {
+  if (hopIndex >= currentHops.length) {
+    //done
+    finishRouting();
+    return;
+  }
+
+  const hop  = currentHops[hopIndex];
+  const reroute = hop.reroute || false;
+
+  console.log("hop", hopIndex + 1, "->", hop.to.name);
+
+  hop.from.state = "routing";
+  hop.to.state   = "receiving";
+
+  //add route line immediately (fades over 4s from now)
+  routeLines.push({
+    x1: hop.from.x, y1: hop.from.y,
+    x2: hop.to.x,   y2: hop.to.y,
+    ts: Date.now(),
+    reroute,
+  });
+
+  //set traveling dot
+  travelDot = {
+    x: hop.from.x, y: hop.from.y,
+    tx: hop.to.x,  ty: hop.to.y,
+    startTime: Date.now(),
+    duration: 400,
+  };
+
+  //update info panel immediately for this hop
+  const xorHex = "0x" + hop.dist.toString(16).toUpperCase().padStart(4, "0");
+  const hopText = reroute
+    ? `reroute: ${hop.from.name} -> ${hop.to.name}  xor: ${xorHex}`
+    : `hop ${hopIndex + 1}: ${hop.from.name} -> ${hop.to.name}  xor: ${xorHex}`;
+
+  const el = document.getElementById("info-log");
+  const span = document.createElement("span");
+  span.className = reroute ? "log-reroute" : "log-hop";
+  span.textContent = hopText;
+  el.appendChild(document.createElement("br"));
+  el.appendChild(span);
+  el.scrollTop = el.scrollHeight;
+
+  hopIndex++;
+  hopsDone++;
+}
+
+function finishRouting() {
+  animating = false;
+
+  const reached = hopsDone;
+  geokadHops    = hopsDone;
+
+  const el = document.getElementById("info-log");
+  el.appendChild(document.createElement("br"));
+  el.appendChild(document.createElement("br"));
+
+  const span = document.createElement("span");
+  span.className = "log-summary";
+  span.textContent = `done: ${geokadHops} hops, reached ${reached} nodes`;
+  el.appendChild(span);
+  el.scrollTop = el.scrollHeight;
+
+  setTimeout(() => {
+    nodes.forEach(n => { if (!n.dead) n.state = "idle"; });
+    draw();
+  }, 800);
+}
+
+//broadcast mode: animate simultaneous lines from source to all alive nodes
+function startBroadcast() {
+  const src = getSelectedNode();
+  if (!src) return;
+
+  console.log("broadcast started from", src.name);
+
+  nodes.forEach(n => { if (!n.dead) n.state = "idle"; });
+  routeLines = [];
+
+  const targets = nodes.filter(n => !n.dead && n.id !== src.id);
+  src.state = "routing";
+
+  setInfoLines([{ text: `broadcast from: ${src.name}`, type: "plain" }]);
+
+  const el = document.getElementById("info-log");
+
+  targets.forEach((t, i) => {
+    setTimeout(() => {
+      t.state = "receiving";
+      routeLines.push({ x1: src.x, y1: src.y, x2: t.x, y2: t.y, ts: Date.now(), reroute: false });
+
+      const span = document.createElement("span");
+      span.className = "log-hop";
+      span.textContent = `broadcast -> ${t.name}`;
+      el.appendChild(document.createElement("br"));
+      el.appendChild(span);
+      el.scrollTop = el.scrollHeight;
+
+      console.log("broadcast ->", t.name);
+
+      if (i === targets.length - 1) {
+        setTimeout(() => {
+          const s = document.createElement("span");
+          s.className = "log-summary";
+          s.textContent = `done: reached ${targets.length} nodes`;
+          el.appendChild(document.createElement("br"));
+          el.appendChild(document.createElement("br"));
+          el.appendChild(s);
+          el.scrollTop = el.scrollHeight;
+          setTimeout(() => {
+            nodes.forEach(n => { if (!n.dead) n.state = "idle"; });
+            animating = false;
+            draw();
+          }, 600);
+        }, 300);
+      }
+    }, i * 120);
+  });
+
+  animating = true;
+  requestAnimationFrame(draw);
+}
+
+function killSelectedNode() {
+  const node = getSelectedNode();
+  if (!node) return;
+  if (node.dead) return;
+
+  console.log("killing node", node.name);
+  node.dead  = true;
+  node.state = "dead";
+
+  //if mid-route, note rerouting
+  if (animating) {
+    console.log("rerouting around", node.name);
+    const el = document.getElementById("info-log");
+    const span = document.createElement("span");
+    span.className = "log-reroute";
+    span.textContent = `rerouting around ${node.name}`;
+    el.appendChild(document.createElement("br"));
+    el.appendChild(span);
+  }
+
+  populateSelector();
+  draw();
+}
+
+function resetAll() {
+  animating   = false;
+  routeLines  = [];
+  travelDot   = null;
+  hopIndex    = 0;
+  hopsDone    = 0;
+  currentHops = [];
+  geokadHops  = 0;
+  aodvBcasts  = 0;
+
+  nodes.forEach(n => {
+    n.dead  = false;
+    n.state = "idle";
+  });
+
+  document.getElementById("info-log").textContent = "select source and press send sos.";
+
+  populateSelector();
+  initNodes();
+  draw();
+}
+
+//drag logic
+let dragging = null;
+let dragOffX  = 0;
+let dragOffY  = 0;
+
+function nodeAt(x, y) {
+  return nodes.find(n => Math.sqrt((n.x - x) ** 2 + (n.y - y) ** 2) < NODE_RADIUS + 4);
+}
+
+canvas.addEventListener("mousedown", e => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const hit = nodeAt(mx, my);
+  if (hit) {
+    dragging = hit;
+    dragOffX = mx - hit.x;
+    dragOffY = my - hit.y;
+    canvas.style.cursor = "grabbing";
+  }
+});
+
+canvas.addEventListener("mousemove", e => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  if (dragging) {
+    dragging.x = mx - dragOffX;
+    dragging.y = my - dragOffY;
+    if (!animating) draw();
+    return;
+  }
+
+  //tooltip
+  const hit = nodeAt(mx, my);
+  const tip  = document.getElementById("tooltip");
+  if (hit) {
+    const contacts = kbucketContacts(hit);
+    tip.style.display = "block";
+    tip.style.left = (e.clientX + 14) + "px";
+    tip.style.top  = (e.clientY - 10) + "px";
+    tip.innerHTML  = [
+      `<b>${hit.name}</b>`,
+      `id: 0x${hit.hexId}`,
+      `lat: ${hit.lat}, lon: ${hit.lon}`,
+      `port: ${hit.port}`,
+      `k-contacts: ${contacts.length > 0 ? contacts.join(", ") : "none"}`,
+    ].join("<br>");
+    canvas.style.cursor = "grab";
+  } else {
+    tip.style.display = "none";
+    canvas.style.cursor = "default";
+  }
+});
+
+window.addEventListener("mouseup", () => {
+  dragging = null;
+  canvas.style.cursor = "default";
+  if (!animating) draw();
+});
+
+//button handlers
+document.getElementById("btn-send").addEventListener("click", () => {
+  const mode = document.getElementById("sel-mode").value;
+  if (mode === "broadcast") startBroadcast();
+  else startRouting();
+});
+document.getElementById("btn-kill").addEventListener("click", killSelectedNode);
+document.getElementById("btn-reset").addEventListener("click", resetAll);
+document.getElementById("btn-lora").addEventListener("click", () => {
+  loraEnabled = !loraEnabled;
+  const btn = document.getElementById("btn-lora");
+  btn.textContent = loraEnabled ? "lora: on" : "lora: off";
+  btn.classList.toggle("on", loraEnabled);
+  console.log("lora toggled", loraEnabled);
+  if (!animating) draw();
+});
+document.getElementById("chk-range").addEventListener("change", e => {
+  showRange = e.target.checked;
+  if (!animating) draw();
+});
+
+//init
+window.addEventListener("resize", () => {
+  resizeCanvas();
+  populateSelector();
+});
+
+//defer first init so flex layout is complete before reading dimensions
+requestAnimationFrame(() => {
+  resizeCanvas();
+  populateSelector();
+});
+</script>
+</body>
+</html>

@@ -3,8 +3,8 @@ import { PeerNode } from "./peer";
 const receiver = new PeerNode({ name: "receiver" });
 
 receiver.onReceive((from, data) => {
-  console.log(`received from ${from}: ${data}`);
-  setTimeout(() => receiver.stop(), 500);
+  console.log(`received from ${from}: \n${data}`);
+  // setTimeout(() => receiver.stop(), 500);
 });
 
 receiver.start().then(() => {
