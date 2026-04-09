@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { Text, Pressable, StyleSheet, Animated } from 'react-native';
 import { useRouter } from 'expo-router';
+import { sendSOS } from '../services/GeoKadService';
 
 export default function SOSButton() {
   const router = useRouter();
@@ -24,7 +25,10 @@ export default function SOSButton() {
     <Animated.View style={[styles.outerRing, { transform: [{ scale: scaleAnim }] }]}>
       <Pressable
         delayLongPress={2000}
-        onLongPress={() => router.push('/sos-active')}
+        onLongPress={async () => {
+          await sendSOS('Emergency! SOS triggered.');
+          router.push('/sos-active');
+        }}
         onPressIn={handlePressIn}
         onPressOut={handlePressOut}
         style={styles.innerCircle}

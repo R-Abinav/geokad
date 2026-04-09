@@ -22,7 +22,8 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.toursafe.app"
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -30,6 +31,11 @@
     },
     "plugins": [
       "expo-font"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "526e01ce-3c15-417a-8466-efb912ab9916"
+      }
+    }
   }
 }

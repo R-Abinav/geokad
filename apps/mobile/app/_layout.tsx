@@ -17,12 +17,12 @@ import React, { useRef, useState, useEffect } from 'react';
 import IntroAnimation from '../components/IntroAnimation';
 import { useSosStore } from '../store/useSosStore';
 import '../global.css';
+import { startGeoKad } from '../services/GeoKadService';
+
 
 export default function RootLayout() {
   useEffect(() => {
-    fetch('http://10.96.63.200:3001')
-      .then(() => console.log('✅ Reached laptop node'))
-      .catch((e) => console.log('❌ Cannot reach laptop:', e.message));
+    startGeoKad();
   }, []);
 
   const [fontsLoaded] = useFonts({

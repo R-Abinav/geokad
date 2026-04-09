@@ -1,0 +1,10 @@
+{
+  "build": {
+    "preview": {
+      "android": {
+        "buildType": "apk"
+      },
+      "prebuildCommand": "npm run build --workspace=@geokad/core --workspace=@geokad/ble"
+    }
+  }
+}

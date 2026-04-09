@@ -1,0 +1,14 @@
+{
+  "name": "@geokad/ble",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "prepare": "tsc",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@geokad/core": "*",
+    "react-native-ble-plx": "*"
+  }
+}

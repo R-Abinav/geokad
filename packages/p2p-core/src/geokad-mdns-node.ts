@@ -7,6 +7,7 @@ const lon = parseFloat(process.env.LON || '80.27');
 
 const transport = new MdnsTransport(3001);
 const node = new GeoKadNode(lat, lon, transport);
+console.log('GeoKad node started, ID:', node.id, 'address:', node.address);
 
 const bonjour = new Bonjour();
 const serviceName = `geokad-${Math.random().toString(36).slice(2, 8)}`;
@@ -21,6 +22,7 @@ bonjour.publish({
 
 // Discover other peers on the network
 const browser = bonjour.find({ type: 'toursafe-geokad' });
+console.log('Browsing for peers...');
 
 browser.on('up', (service: Service) => {
     // Ignore our own broadcast
@@ -53,8 +55,21 @@ browser.on('up', (service: Service) => {
 });
 
 node.on('sos', (msg: any) => {
+    console.log('SOS received on node!');
     console.log('--- SOS RECEIVED ---');
     console.log(msg);
 });
 
 export default node;
+
+import * as http from 'http';
+
+const httpServer = http.createServer((req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ status: 'ok', nodeId: node.id }));
+});
+
+httpServer.listen(3002, '0.0.0.0', () => {
+  console.log('HTTP bridge on port 3002');
+});
