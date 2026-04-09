@@ -16,16 +16,17 @@ import { StatusBar } from 'expo-status-bar';
 import React, { useRef, useState, useEffect } from 'react';
 import IntroAnimation from '../components/IntroAnimation';
 import { useSosStore } from '../store/useSosStore';
-import { connectToRelay } from '../services/GeoKadService';
+import { connectToRelay, initBLE } from '../services/GeoKadService';
 import '../global.css';
 
 
 export default function RootLayout() {
   useEffect(() => {
-    // Auto-connect to relay on startup
-    // TODO: Make this configurable via the UI. For now hardcoded.
-    // Change this IP to your laptop's IP when testing.
-    connectToRelay('10.96.63.200:3002');
+    // Start BLE first — works completely offline, P2P
+    initBLE();
+    // Optionally connect to WiFi relay if on same network
+    // Change this IP to your laptop IP for WiFi-assisted testing
+    // connectToRelay('10.96.63.200:3002');
   }, []);
 
   const [fontsLoaded] = useFonts({

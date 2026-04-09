@@ -39,7 +39,15 @@
     },
     "plugins": [
       "expo-font",
-      "expo-router"
+      "expo-router",
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "modes": [],
+          "bluetoothAlwaysPermission": "Allow TourSafe to use Bluetooth to communicate with nearby peers"
+        }
+      ]
     ],
     "extra": {
       "eas": {

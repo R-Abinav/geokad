@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import SOSButton from '../../components/SOSButton';
 import { useSosStore } from '../../store/useSosStore';
-import { connectToRelay, isConnected, getPeerCount, onPeerCount, onSOS, onSosAck } from '../../services/GeoKadService';
+import { connectToRelay, isConnected, isBLEAvailable, getTransportMode, getPeerCount, onPeerCount, onSOS, onSosAck } from '../../services/GeoKadService';
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -28,9 +28,9 @@ export default function HomeScreen() {
       });
     }, 100);
 
-    // Poll connection status every 2s
+    // Poll transport status every 2s
     const statusInterval = setInterval(() => {
-      setConnected(isConnected());
+      setConnected(isConnected() || isBLEAvailable());
       setPeerCount(getPeerCount());
     }, 2000);
 
@@ -55,10 +55,12 @@ export default function HomeScreen() {
     return () => clearInterval(statusInterval);
   }, []);
 
-  const statusDotColor = connected ? '#34C759' : '#555';
-  const statusText = connected
-    ? `${peerCount} peer${peerCount !== 1 ? 's' : ''} · mesh active`
-    : 'mesh inactive · not connected';
+  const mode = getTransportMode();
+  const statusDotColor = mode === 'offline' ? '#555' : mode === 'wifi' ? '#0A84FF' : '#34C759';
+  const statusText = mode === 'both'    ? `BLE + WiFi · ${peerCount} peer${peerCount !== 1 ? 's' : ''}`
+                   : mode === 'ble'     ? 'BLE mesh active · scanning'
+                   : mode === 'wifi'    ? `WiFi relay · ${peerCount} peer${peerCount !== 1 ? 's' : ''}`
+                   : 'mesh inactive · not connected';
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
