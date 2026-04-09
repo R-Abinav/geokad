@@ -16,13 +16,16 @@ import { StatusBar } from 'expo-status-bar';
 import React, { useRef, useState, useEffect } from 'react';
 import IntroAnimation from '../components/IntroAnimation';
 import { useSosStore } from '../store/useSosStore';
+import { connectToRelay } from '../services/GeoKadService';
 import '../global.css';
-import { startGeoKad } from '../services/GeoKadService';
 
 
 export default function RootLayout() {
   useEffect(() => {
-    startGeoKad();
+    // Auto-connect to relay on startup
+    // TODO: Make this configurable via the UI. For now hardcoded.
+    // Change this IP to your laptop's IP when testing.
+    connectToRelay('10.96.63.200:3002');
   }, []);
 
   const [fontsLoaded] = useFonts({

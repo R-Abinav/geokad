@@ -1,10 +1,17 @@
 {
+  "cli": {
+    "version": ">= 16.0.0"
+  },
   "build": {
     "preview": {
       "android": {
         "buildType": "apk"
-      },
-      "prebuildCommand": "npm run build --workspace=@geokad/core --workspace=@geokad/ble"
+      }
+    },
+    "production": {
+      "android": {
+        "buildType": "apk"
+      }
     }
   }
 }

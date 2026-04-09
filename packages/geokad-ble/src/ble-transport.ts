@@ -1,83 +1,126 @@
-import { BleManager } from 'react-native-ble-plx';
+import { BleManager, Device } from 'react-native-ble-plx';
+import BLEAdvertiser from 'react-native-ble-advertiser';
 import { Transport } from '@geokad/core';
 
-export const SERVICE_UUID = '0000FFF0-0000-1000-8000-00805F9B34FB';
-export const CHARACTERISTIC_UUID = '0000FFF1-0000-1000-8000-00805F9B34FB';
+const SERVICE_UUID = '0000FFF0-0000-1000-8000-00805F9B34FB';
 
-// Using RN compatible base64 or global Buffer polyfill
-const utf8ToBase64 = (str: string) => {
-    if (typeof Buffer !== 'undefined') return Buffer.from(str, 'utf8').toString('base64');
-    if ((global as any).btoa) return (global as any).btoa(unescape(encodeURIComponent(str)));
-    return ''; // fallback
-};
+// Encode message into manufacturer data (max ~20 bytes)
+// We only encode the emergencyId (first 16 chars) to fit BLE limits
+function encodeManufacturerData(emergencyId: string, nodeId: string): number[] {
+  const str = `${emergencyId.slice(0, 8)}|${nodeId.slice(0, 8)}`;
+  return Array.from(str).map(c => c.charCodeAt(0));
+}
 
-const base64ToUtf8 = (b64: string) => {
-    if (typeof Buffer !== 'undefined') return Buffer.from(b64, 'base64').toString('utf8');
-    if ((global as any).atob) return decodeURIComponent(escape((global as any).atob(b64)));
-    return ''; // fallback
-};
+function decodeManufacturerData(data: number[]): { emergencyId: string, nodeId: string } | null {
+  try {
+    const str = String.fromCharCode(...data);
+    const [emergencyId, nodeId] = str.split('|');
+    return { emergencyId, nodeId };
+  } catch {
+    return null;
+  }
+}
 
 export class BLETransport implements Transport {
-    private manager: BleManager;
-    private deviceName: string;
-    private address: string;
+  private manager: BleManager;
+  private nodeId: string;
+  private messageHandlers: ((msg: object, from: string) => void)[] = [];
+  private isScanning = false;
 
-    constructor(manager: BleManager, nodeId: string) {
-        this.manager = manager;
-        this.deviceName = `TourSafe-${nodeId.substring(0, 8)}`;
-        this.address = '00:00:00:00:00:00'; // Default till set/generated
+  constructor(manager: BleManager, nodeId: string) {
+    this.manager = manager;
+    this.nodeId = nodeId;
+  }
+
+  getAddress(): string {
+    return `ble-${this.nodeId.slice(0, 8)}`;
+  }
+
+  // BLE advertisement-based send — broadcasts SOS in the ad packet
+  async send(address: string, message: any): Promise<void> {
+    if (message.type !== 'SOS') return;
+    try {
+      const manufacturerData = encodeManufacturerData(
+        message.emergencyId,
+        message.originId || this.nodeId
+      );
+      
+      await BLEAdvertiser.setCompanyId(0x004C);
+      await BLEAdvertiser.broadcast(
+        SERVICE_UUID,
+        manufacturerData,
+        {
+          advertiseMode: 0,        // ADVERTISE_MODE_LOW_LATENCY
+          txPowerLevel: 3,         // ADVERTISE_TX_POWER_HIGH
+          connectable: false,
+          includeDeviceName: true,
+        }
+      );
+      
+      // Stop broadcasting after 5 seconds
+      setTimeout(() => BLEAdvertiser.stopBroadcast(), 5000);
+      console.log('📡 BLE SOS broadcast started');
+    } catch (e) {
+      console.log('BLE advertise failed:', e);
     }
+  }
 
-    getAddress(): string {
-        return this.address;
-    }
+  // Scan for TourSafe BLE advertisements
+  onMessage(handler: (msg: object, from: string) => void): void {
+    this.messageHandlers.push(handler);
+    
+    // Start scanning immediately
+    this.startScanning();
+  }
 
-    async send(address: string, message: object): Promise<void> {
-        try {
-            const device = await this.manager.connectToDevice(address);
-            await device.discoverAllServicesAndCharacteristics();
-            const payload = utf8ToBase64(JSON.stringify(message));
+  private startScanning(): void {
+    if (this.isScanning) return;
+    this.isScanning = true;
+
+    this.manager.startDeviceScan(
+      null,
+      { allowDuplicates: false },
+      (error, device) => {
+        if (error) {
+          console.log('BLE scan error:', error);
+          this.isScanning = false;
+          return;
+        }
+        if (!device) return;
+        
+        // Only process TourSafe devices
+        if (!device.name?.startsWith('TourSafe-')) return;
+        
+        // Parse manufacturer data from advertisement
+        if (device.manufacturerData) {
+          try {
+            const raw = Buffer.from(device.manufacturerData, 'base64');
+            const bytes = Array.from(raw);
+            const decoded = decodeManufacturerData(bytes);
             
-            await device.writeCharacteristicWithResponseForService(
-                SERVICE_UUID,
-                CHARACTERISTIC_UUID,
-                payload
-            );
-            await device.cancelConnection();
-        } catch (e) {
-            console.log(`Failed to send via BLE to ${address}:`, e);
+            if (decoded) {
+              const sosMessage = {
+                type: 'SOS',
+                emergencyId: decoded.emergencyId,
+                originId: decoded.nodeId,
+                originLat: 0,
+                originLon: 0,
+                message: 'SOS via BLE',
+                ttl: 5,
+                path: [decoded.nodeId]
+              };
+              this.messageHandlers.forEach(h => h(sosMessage, device.id));
+            }
+          } catch (e) {
+            console.log('Failed to parse BLE manufacturer data:', e);
+          }
         }
-    }
+      }
+    );
+  }
 
-    onMessage(handler: (msg: object, fromAddress: string) => void): void {
-        // NOTE: react-native-ble-plx only supports Central mode officially.
-        // We write the peripheral listener logic here conceptually or assuming a compatible fork.
-        const man: any = this.manager;
-
-        if (man.startAdvertising) {
-            man.startAdvertising({
-                name: this.deviceName,
-                serviceUUIDs: [SERVICE_UUID]
-            });
-        }
-
-        if (man.onCharacteristicWrite) {
-            man.onCharacteristicWrite(
-                SERVICE_UUID,
-                CHARACTERISTIC_UUID,
-                (error: any, characteristic: any) => {
-                    if (error) return;
-                    if (characteristic && characteristic.value) {
-                        try {
-                            const decoded = base64ToUtf8(characteristic.value);
-                            const msg = JSON.parse(decoded);
-                            handler(msg, characteristic.deviceId || 'unknown-ble');
-                        } catch (e) {
-                            console.log('Failed to parse incoming BLE payload', e);
-                        }
-                    }
-                }
-            );
-        }
-    }
+  stopScanning(): void {
+    this.manager.stopDeviceScan();
+    this.isScanning = false;
+  }
 }

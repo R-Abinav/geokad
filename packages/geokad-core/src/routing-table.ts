@@ -30,14 +30,14 @@ export class RoutingTable {
         if (contact.id === this.selfId) return;
         const index = this.bucketIndex(this.selfId, contact.id);
         if (index >= 0 && index < 160) {
-            this.buckets[index].add(contact);
+            this.buckets[index]?.add(contact);
         }
     }
 
     remove(id: string): void {
         const index = this.bucketIndex(this.selfId, id);
         if (index >= 0 && index < 160) {
-            this.buckets[index].remove(id);
+            this.buckets[index]?.remove(id);
         }
     }
 

@@ -1,26 +1,27 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, Pressable } from 'react-native';
+import React, { useEffect } from 'react';
+import { View, Text, Pressable, StyleSheet, Animated } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSosStore } from '../store/useSosStore';
+import { isConnected } from '../services/GeoKadService';
 
 export default function SosActiveScreen() {
   const router = useRouter();
   const { peersNotified, activate, cancel, incrementPeers } = useSosStore();
-  const [apiStatus, setApiStatus] = useState('');
+  const pulseAnim = React.useRef(new Animated.Value(1)).current;
+  const connected = isConnected();
 
   useEffect(() => {
     activate();
 
-    const triggerBackend = async () => {
-      try {
-        const res = await fetch('http://localhost:8080/api/v1/sos/trigger', { method: 'POST' });
-        if (!res.ok) setApiStatus('API Not responding');
-      } catch (e) {
-        setApiStatus('API Not responding');
-      }
-    };
-    triggerBackend();
+    // Pulse animation for the SOS circle
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.15, duration: 800, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
+      ])
+    ).start();
 
+    // Simulate peer notification count increasing
     const interval = setInterval(() => {
       incrementPeers();
     }, 2000);
@@ -34,40 +35,94 @@ export default function SosActiveScreen() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#000000' }} className="items-center justify-between py-20 px-6">
-      <View 
-        style={{ backgroundColor: 'rgba(255, 59, 48, 0.08)' }} 
-        className="absolute inset-0 pointer-events-none"
-      />
+    <View style={styles.container}>
+      <View style={styles.redOverlay} />
 
-      <View className="flex-1 justify-center items-center mt-12 w-full">
-        <View style={{ width: 200, height: 200, borderRadius: 100, backgroundColor: '#FF3B30', justifyContent: 'center', alignItems: 'center' }}>
-          <Text style={{ fontFamily: 'Inter_800ExtraBold', letterSpacing: 4 }} className="text-white text-3xl">
-            SOS
-          </Text>
-        </View>
+      <View style={styles.centerContent}>
+        <Animated.View style={[styles.sosCircle, { transform: [{ scale: pulseAnim }] }]}>
+          <Text style={styles.sosText}>SOS</Text>
+        </Animated.View>
         
-        <Text style={{ fontFamily: 'Inter_800ExtraBold', letterSpacing: 4 }} className="text-white text-3xl mt-16 text-center uppercase">
-          SOS Active
+        <Text style={styles.activeText}>SOS ACTIVE</Text>
+        
+        <Text style={styles.alertingText}>
+          {connected ? 'Alerting peers via mesh...' : 'Not connected to relay'}
         </Text>
-        <Text style={{ fontFamily: 'Inter_400Regular' }} className="text-[#aaaaaa] text-sm mt-4 text-center">
-          Alerting peers via mesh...
-        </Text>
-        <Text style={{ fontFamily: 'Inter_500Medium' }} className="text-white text-lg mt-2 text-center">
+        
+        <Text style={styles.peersText}>
           {peersNotified} peers notified
         </Text>
-        {apiStatus ? (
-          <Text style={{ fontFamily: 'Inter_400Regular' }} className="text-red-500 text-sm mt-4 text-center">
-            {apiStatus}
-          </Text>
-        ) : null}
       </View>
 
-      <Pressable onPress={handleCancel} className="mt-8 py-4 px-8">
-        <Text style={{ fontFamily: 'Inter_400Regular' }} className="text-white text-sm border-b border-white pb-1">
-          Cancel
-        </Text>
+      <Pressable onPress={handleCancel} style={styles.cancelButton}>
+        <Text style={styles.cancelText}>Cancel</Text>
       </Pressable>
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#000000',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 80,
+    paddingHorizontal: 24,
+  },
+  redOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255, 59, 48, 0.08)',
+  },
+  centerContent: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sosCircle: {
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    backgroundColor: '#FF3B30',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sosText: {
+    fontFamily: 'Inter_800ExtraBold',
+    color: '#fff',
+    fontSize: 32,
+    letterSpacing: 4,
+  },
+  activeText: {
+    fontFamily: 'Inter_800ExtraBold',
+    color: '#fff',
+    fontSize: 28,
+    letterSpacing: 4,
+    marginTop: 48,
+    textTransform: 'uppercase',
+  },
+  alertingText: {
+    fontFamily: 'Inter_400Regular',
+    color: '#aaaaaa',
+    fontSize: 14,
+    marginTop: 16,
+    textAlign: 'center',
+  },
+  peersText: {
+    fontFamily: 'Inter_500Medium',
+    color: '#fff',
+    fontSize: 18,
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  cancelButton: {
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+  },
+  cancelText: {
+    fontFamily: 'Inter_400Regular',
+    color: '#fff',
+    fontSize: 14,
+    textDecorationLine: 'underline',
+  },
+});

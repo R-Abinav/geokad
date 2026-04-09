@@ -8,6 +8,7 @@ interface SosState {
   activate: () => void;
   cancel: () => void;
   incrementPeers: () => void;
+  setPeersNotified: (n: number) => void;
   setIntroSosCenterY: (y: number) => void;
 }
 
@@ -17,29 +18,12 @@ export const useSosStore = create<SosState>((set) => ({
   activatedAt: null,
   introSosCenterY: null,
   setIntroSosCenterY: (y: number) => set({ introSosCenterY: y }),
-  activate: async () => {
+  activate: () => {
     set({ isActive: true, activatedAt: Date.now(), peersNotified: 0 });
-    try {
-      await fetch('http://localhost:8080/api/v1/sos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'activate' })
-      });
-    } catch (e) {
-      console.log('API placeholder: backend unreachable');
-    }
   },
-  cancel: async () => {
+  cancel: () => {
     set({ isActive: false, activatedAt: null, peersNotified: 0 });
-    try {
-      await fetch('http://localhost:8080/api/v1/sos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'cancel' })
-      });
-    } catch (e) {
-      console.log('API placeholder: backend unreachable');
-    }
   },
-  incrementPeers: () => set((state) => ({ peersNotified: Math.min(state.peersNotified + 1, 4) }))
+  incrementPeers: () => set((state) => ({ peersNotified: state.peersNotified + 1 })),
+  setPeersNotified: (n: number) => set({ peersNotified: n }),
 }));
