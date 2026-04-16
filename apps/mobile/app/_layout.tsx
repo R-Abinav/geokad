@@ -16,7 +16,7 @@ import { StatusBar } from 'expo-status-bar';
 import React, { useRef, useState, useEffect } from 'react';
 import IntroAnimation from '../components/IntroAnimation';
 import { useSosStore } from '../store/useSosStore';
-import { connectToRelay, initBLE } from '../services/GeoKadService';
+import { initBLE } from '../services/GeoKadService';
 import '../global.css';
 
 
@@ -24,9 +24,6 @@ export default function RootLayout() {
   useEffect(() => {
     // Start BLE first — works completely offline, P2P
     initBLE();
-    // Optionally connect to WiFi relay if on same network
-    // Change this IP to your laptop IP for WiFi-assisted testing
-    // connectToRelay('10.96.63.200:3002');
   }, []);
 
   const [fontsLoaded] = useFonts({

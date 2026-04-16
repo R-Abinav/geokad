@@ -2,20 +2,12 @@ import React, { useEffect } from 'react';
 import { View, Text, Pressable, StyleSheet, Animated } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSosStore } from '../store/useSosStore';
-import { getTransportMode } from '../services/GeoKadService';
-
-const TRANSPORT_LABELS: Record<string, string> = {
-  both:    'Alerting peers via BLE + WiFi...',
-  ble:     'Alerting peers via BLE mesh...',
-  wifi:    'Alerting peers via WiFi relay...',
-  offline: 'Offline — SOS stored locally',
-};
 
 export default function SosActiveScreen() {
   const router = useRouter();
   const { peersNotified, activate, cancel } = useSosStore();
   const pulseAnim = React.useRef(new Animated.Value(1)).current;
-  const transportLabel = TRANSPORT_LABELS[getTransportMode()];
+  const transportLabel = 'Alerting peers via BLE mesh...';
 
   useEffect(() => {
     activate();

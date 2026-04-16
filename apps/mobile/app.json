@@ -14,7 +14,13 @@
       "backgroundColor": "#000000"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "bluetooth-peripheral",
+          "bluetooth-central"
+        ]
+      }
     },
     "android": {
       "adaptiveIcon": {

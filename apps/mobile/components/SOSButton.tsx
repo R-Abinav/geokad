@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { Text, Pressable, StyleSheet, Animated } from 'react-native';
 import { useRouter } from 'expo-router';
+import * as Location from 'expo-location';
 import { sendSOS } from '../services/GeoKadService';
 
 export default function SOSButton() {
@@ -26,7 +27,20 @@ export default function SOSButton() {
       <Pressable
         delayLongPress={2000}
         onLongPress={async () => {
-          await sendSOS('Emergency! SOS triggered.');
+          try {
+            const { status } = await Location.requestForegroundPermissionsAsync();
+            let lat = 0;
+            let lon = 0;
+            if (status === 'granted') {
+              const loc = await Location.getCurrentPositionAsync({});
+              lat = loc.coords.latitude;
+              lon = loc.coords.longitude;
+            }
+            await sendSOS(lat, lon);
+          } catch (e) {
+            console.warn('Location error/timeout, using fallback', e);
+            await sendSOS(null, null); // fallback
+          }
           router.push('/sos-active');
         }}
         onPressIn={handlePressIn}

@@ -4,8 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import SOSButton from '../../components/SOSButton';
 import { useSosStore } from '../../store/useSosStore';
-import { connectToRelay, isConnected, isBLEAvailable, getTransportMode, getPeerCount, onPeerCount, onSOS, onSosAck } from '../../services/GeoKadService';
-
+import { initBLE, startListening, getMyNodeId, getKBucketContacts, GeoKadEvents } from '../../services/GeoKadService';
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -28,39 +27,35 @@ export default function HomeScreen() {
       });
     }, 100);
 
-    // Poll transport status every 2s
+    // Init BLE and generic loop
+    initBLE();
+    
+    // Poll transport status
     const statusInterval = setInterval(() => {
-      setConnected(isConnected() || isBLEAvailable());
-      setPeerCount(getPeerCount());
+      setConnected(true);
+      setPeerCount(getKBucketContacts().length);
     }, 2000);
 
     // Listen for incoming SOS
-    onSOS((msg) => {
-      setIncomingSOS(msg);
-      // Auto-navigate to incoming SOS screen
+    GeoKadEvents.on('SOS_RECEIVED', (msg: any) => {
+      setIncomingSOS({ emergencyId: msg.senderNodeId, message: `SOS from ${msg.senderNodeId}` });
       router.push('/sos-incoming');
     });
 
-    // Listen for peer count updates
-    onPeerCount((count) => {
-      setPeerCount(count);
-      setConnected(true);
-    });
-
     // Listen for SOS acks to update notified count
-    onSosAck((notifiedCount) => {
-      setPeersNotified(notifiedCount);
+    GeoKadEvents.on('ACK_RECEIVED', () => {
+      useSosStore.getState().incrementPeers();
     });
 
-    return () => clearInterval(statusInterval);
+    return () => {
+      clearInterval(statusInterval);
+      GeoKadEvents.removeAllListeners();
+    };
   }, []);
 
-  const mode = getTransportMode();
-  const statusDotColor = mode === 'offline' ? '#555' : mode === 'wifi' ? '#0A84FF' : '#34C759';
-  const statusText = mode === 'both'    ? `BLE + WiFi · ${peerCount} peer${peerCount !== 1 ? 's' : ''}`
-                   : mode === 'ble'     ? 'BLE mesh active · scanning'
-                   : mode === 'wifi'    ? `WiFi relay · ${peerCount} peer${peerCount !== 1 ? 's' : ''}`
-                   : 'mesh inactive · not connected';
+  const mode = connected ? 'ble' : 'offline';
+  const statusDotColor = connected ? '#34C759' : '#555';
+  const statusText = connected ? `BLE Mesh · ${peerCount} peer${peerCount !== 1 ? 's' : ''}` : 'mesh inactive · not connected';
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -102,28 +97,9 @@ export default function HomeScreen() {
           <Text style={styles.rowArrow}>→</Text>
         </Pressable>
 
-        {/* Relay connection input */}
+        {/* Relay connection input hidden, routing handled over BLE */}
         <View style={styles.relayRow}>
-          <TextInput
-            style={styles.relayInput}
-            placeholder="Relay IP  e.g. 10.96.63.200:3002"
-            placeholderTextColor="#555"
-            value={relayInput}
-            onChangeText={setRelayInput}
-            autoCapitalize="none"
-            keyboardType="url"
-          />
-          <Pressable
-            style={styles.connectButton}
-            onPress={() => {
-              if (relayInput.trim()) {
-                connectToRelay(relayInput.trim());
-                setRelayInput('');
-              }
-            }}
-          >
-            <Text style={styles.connectButtonText}>Connect</Text>
-          </Pressable>
+          <Text style={{color: '#555', fontSize: 12}}>Mesh Node ID: {getMyNodeId()}</Text>
         </View>
       </View>
     </View>

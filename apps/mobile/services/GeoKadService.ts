@@ -1,128 +1,110 @@
-// GeoKad Service — Dual transport: BLE (primary, P2P) + WebSocket relay (secondary, WiFi)
-// BLE works completely offline — no relay/laptop needed
-// WebSocket is opportunistic — used if a relay node is configured
-//
-// BLE flow:
-//   Advertise: SOS encoded in manufacturer data → other phones scan and decode
-//   Scan:      Always running, detects nearby TourSafe SOS advertisements
-//
-// The try/require pattern for BLE means Expo Go degrades gracefully.
-// In an EAS APK build, both native modules are present and BLE works fully.
-
 import { Platform, PermissionsAndroid } from 'react-native';
+import EventEmitter from 'eventemitter3';
+import { generateNodeId, generateRandomId } from './GeoHash';
+import { KBucket, Contact } from './KBucket';
+import { SeenCache } from './SeenCache';
 
-// ── Constants ─────────────────────────────────────────────
 const TOURSAFE_UUID = '74278BDA-B644-4520-8F0C-720EAF059935';
 const COMPANY_ID_HI = 0xFF;
-const COMPANY_ID_LO = 0x02; // Little-endian: [0x02, 0xFF] in the packet
-const SOS_FLAG = 0xA5;
+const COMPANY_ID_LO = 0x02; // Little-endian: [0x02, 0xFF]
 
-// ── Types ─────────────────────────────────────────────────
-type SOSHandler = (event: SOSEvent) => void;
-type PeerCountHandler = (count: number) => void;
-type SosAckHandler = (peersNotified: number) => void;
+// Constants
+const MSG_SOS = 0x01;
+const MSG_ACK = 0x02;
+const MSG_RELAY = 0x03;
 
-export type TransportMode = 'ble' | 'wifi' | 'both' | 'offline';
+const BROADCAST_NODE_ID = 'ffffffffffffffff';
 
-interface SOSEvent {
-  emergencyId: string;
-  message: string;
-  timestamp: number;
-  type?: string;
-  originId?: string;
-  ttl?: number;
-}
+export type TransportMode = 'offline' | 'ble_mesh';
 
-// ── Module-level state ────────────────────────────────────
+// Internal State
 let _bleManager: any = null;
 let _BLEAdvertiser: any = null;
 let _bleAvailable = false;
 let _bleScanning = false;
-
-let ws: WebSocket | null = null;
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-let _relayAddress: string | null = null;
-let _wsConnected = false;
-let _peerCount = 0;
-let _transportMode: TransportMode = 'offline';
 let _sosAdvertiseTimer: ReturnType<typeof setTimeout> | null = null;
+let _myNodeId: string | null = null;
 
-const seen = new Set<string>();
-const sosHandlers: SOSHandler[] = [];
-const peerCountHandlers: PeerCountHandler[] = [];
-const sosAckHandlers: SosAckHandler[] = [];
+const events = new EventEmitter();
+const bucket = new KBucket(3);
+const seenCache = new SeenCache();
 
-// ── Helper: Encoding / Decoding SOS for BLE ──────────────
-
-function encodeSOSBytes(message: string): number[] {
-  const ts = Math.floor(Date.now() / 1000);
-  const msgBytes = message
-    .substring(0, 18)
-    .split('')
-    .map(c => c.charCodeAt(0) & 0xFF);
-  return [
-    SOS_FLAG, 0x01,                          // marker + version
-    (ts >>> 24) & 0xFF, (ts >>> 16) & 0xFF,  // timestamp (4 bytes big-endian)
-    (ts >>> 8) & 0xFF,  ts & 0xFF,
-    ...msgBytes,
-  ];
+// Helper: Hex string to Uint8Array
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(8);
+  for (let i = 0; i < 8; i++) {
+    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+  }
+  return bytes;
 }
 
-function decodeManufacturerData(b64: string): SOSEvent | null {
+// Helper: Uint8Array to Hex string
+function bytesToHex(bytes: Uint8Array | number[]): string {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Encode Payload
+function encodePayload(type: number, ttl: number, senderIdHex: string, targetIdHex: string, seqNo: number): number[] {
+  const bytes = new Uint8Array(20);
+  bytes[0] = type;
+  bytes[1] = ttl;
+  const senderBytes = hexToBytes(senderIdHex);
+  const targetBytes = hexToBytes(targetIdHex);
+  bytes.set(senderBytes, 2);
+  bytes.set(targetBytes, 10);
+  bytes[18] = seqNo;
+
+  // Checksum
+  let checksum = 0;
+  for (let i = 0; i < 19; i++) {
+    checksum ^= bytes[i];
+  }
+  bytes[19] = checksum;
+  return Array.from(bytes);
+}
+
+function decodeManufacturerData(b64: string): any {
   try {
-    const binary = atob(b64); // atob is a global in React Native
-    const bytes: number[] = Array.from({ length: binary.length }, (_, i) =>
-      binary.charCodeAt(i)
-    );
-    // react-native-ble-plx prepends 2-byte company ID (little-endian): [LO, HI]
+    const binary = atob(b64);
+    const bytes: number[] = Array.from({ length: binary.length }, (_, i) => binary.charCodeAt(i));
+    
     let offset = 0;
     if (bytes.length >= 2 && bytes[0] === COMPANY_ID_LO && bytes[1] === COMPANY_ID_HI) {
       offset = 2;
     }
-    if (bytes[offset] !== SOS_FLAG) return null;
+    
+    const payload = bytes.slice(offset, offset + 20);
+    if (payload.length < 20) return null;
 
-    const ts = ((bytes[offset + 2] << 24) |
-                (bytes[offset + 3] << 16) |
-                (bytes[offset + 4] << 8)  |
-                 bytes[offset + 5]) >>> 0;
-
-    const message = bytes
-      .slice(offset + 6)
-      .filter(b => b >= 0x20 && b < 0x7F) // printable ASCII
-      .map(b => String.fromCharCode(b))
-      .join('')
-      .trim() || 'Emergency SOS';
+    let checksum = 0;
+    for (let i = 0; i < 19; i++) checksum ^= payload[i];
+    if (checksum !== payload[19]) return null; // Invalid Checksum
 
     return {
-      emergencyId: `ble-${ts}`,
-      message,
-      timestamp: ts * 1000,
+      type: payload[0],
+      ttl: payload[1],
+      senderId: bytesToHex(payload.slice(2, 10)),
+      targetId: bytesToHex(payload.slice(10, 18)),
+      seqNo: payload[18],
+      originalBytes: payload
     };
   } catch {
     return null;
   }
 }
 
-// ── BLE Permissions ───────────────────────────────────────
-
 async function requestBLEPermissions(): Promise<boolean> {
   if (Platform.OS !== 'android') return true;
   try {
     if ((Platform.Version as number) >= 31) {
-      // Android 12+ — use new granular permissions, no location needed
       const result = await PermissionsAndroid.requestMultiple([
         PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
         PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE,
         PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
       ]);
-      return Object.values(result).every(
-        r => r === PermissionsAndroid.RESULTS.GRANTED
-      );
+      return Object.values(result).every(r => r === PermissionsAndroid.RESULTS.GRANTED);
     } else {
-      // Android < 12 — needs location for BLE scanning
-      const res = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
-      );
+      const res = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
       return res === PermissionsAndroid.RESULTS.GRANTED;
     }
   } catch {
@@ -130,16 +112,14 @@ async function requestBLEPermissions(): Promise<boolean> {
   }
 }
 
-// ── BLE Init + Scanning ───────────────────────────────────
-
 export async function initBLE(): Promise<void> {
   try {
-    // Use require() so Expo Go doesn't crash — native module missing = caught below
     const { BleManager } = require('react-native-ble-plx');
+    // Note: react-native-ble-advertiser is installed in package.json and was in previous code
     _BLEAdvertiser = require('react-native-ble-advertiser').default;
 
-    _bleManager = new BleManager();
-    _BLEAdvertiser.setCompanyId((COMPANY_ID_HI << 8) | COMPANY_ID_LO); // 0xFF02
+    if (!_bleManager) _bleManager = new BleManager();
+    _BLEAdvertiser.setCompanyId((COMPANY_ID_HI << 8) | COMPANY_ID_LO); 
 
     const granted = await requestBLEPermissions();
     if (!granted) {
@@ -148,51 +128,127 @@ export async function initBLE(): Promise<void> {
     }
 
     _bleAvailable = true;
-    _updateTransportMode();
-    _startBLEScan();
-    console.log('✅ BLE initialized, scanning for peers');
+    startListening();
+    console.log('✅ BLE Mesh initialized');
   } catch (e) {
-    console.log('⚠️ BLE unavailable (Expo Go or unsupported device)');
+    console.log('⚠️ BLE unavailable (Expo Go/Unsupported)', e);
     _bleAvailable = false;
   }
 }
 
-function _startBLEScan(): void {
+export function startListening(): void {
   if (!_bleManager || _bleScanning) return;
-  try {
-    _bleScanning = true;
-    _bleManager.startDeviceScan(
-      [TOURSAFE_UUID],
-      { allowDuplicates: false },
-      (error: any, device: any) => {
-        if (error) {
-          console.log('BLE scan error:', error.message);
-          _bleScanning = false;
-          // Retry after 5s
-          setTimeout(_startBLEScan, 5000);
-          return;
+  _bleScanning = true;
+  _bleManager.startDeviceScan([TOURSAFE_UUID], { allowDuplicates: true }, (error: any, device: any) => {
+    if (error) {
+      console.log('BLE scan error:', error.message);
+      _bleScanning = false;
+      setTimeout(startListening, 5000);
+      return;
+    }
+    if (!device?.manufacturerData) return;
+
+    const decoded = decodeManufacturerData(device.manufacturerData);
+    if (!decoded || !_myNodeId) return;
+
+    const cacheKey = `${decoded.senderId}-${decoded.seqNo}`;
+    if (seenCache.has(cacheKey)) return; // Loop Prevention
+
+    seenCache.add(cacheKey);
+    bucket.addContact(decoded.senderId, { deviceId: device.id });
+
+    // Handle Messages
+    if (decoded.ttl === 0) return;
+
+    if (decoded.type === MSG_SOS) {
+      if (decoded.targetId === _myNodeId || decoded.targetId === BROADCAST_NODE_ID) {
+        // We received an SOS
+        events.emit('SOS_RECEIVED', {
+          senderNodeId: decoded.senderId,
+          targetNodeId: decoded.targetId,
+          hopCount: 5 - decoded.ttl,
+          timestamp: Date.now()
+        });
+
+        if (decoded.targetId === _myNodeId) {
+          sendAck(decoded.senderId); // Acknowledge specifically to sender
         }
-        if (!device?.manufacturerData) return;
-
-        const decoded = decodeManufacturerData(device.manufacturerData);
-        if (!decoded) return;
-        if (seen.has(decoded.emergencyId)) return;
-
-        seen.add(decoded.emergencyId);
-        console.log(`📡 BLE SOS from ${device.id}: ${decoded.message}`);
-        sosHandlers.forEach(h => h(decoded));
       }
-    );
-  } catch (e) {
-    console.log('BLE startDeviceScan error:', e);
-    _bleScanning = false;
-  }
+
+      // TTL > 1 means we can relay
+      if (decoded.ttl > 1 && (decoded.targetId === BROADCAST_NODE_ID || decoded.targetId !== _myNodeId)) {
+        relayMessage(decoded, MSG_SOS);
+        events.emit('SOS_RELAYED', {
+          originalSender: decoded.senderId,
+          relayedBy: _myNodeId,
+          hopCount: 5 - (decoded.ttl - 1)
+        });
+      }
+    } else if (decoded.type === MSG_ACK) {
+      if (decoded.targetId === _myNodeId) {
+        events.emit('ACK_RECEIVED', {
+          from: decoded.senderId,
+          hopCount: 5 - decoded.ttl
+        });
+      } else if (decoded.ttl > 1) {
+        relayMessage(decoded, MSG_ACK);
+      }
+    } else if (decoded.type === MSG_RELAY) {
+      if (decoded.ttl > 1 && decoded.targetId !== _myNodeId) {
+         relayMessage(decoded, MSG_RELAY);
+      }
+    }
+  });
 }
 
-async function _broadcastSOSViaBLE(message: string): Promise<void> {
+function relayMessage(decoded: any, type: number) {
+  setTimeout(() => {
+    // Re-encode with TTL decremented
+    const payload = encodePayload(type, decoded.ttl - 1, decoded.senderId, decoded.targetId, decoded.seqNo);
+    broadcastBlePayload(payload);
+  }, Math.random() * 200 + 50); // Jitter
+}
+
+export function stopListening(): void {
+  _bleManager?.stopDeviceScan();
+  _bleScanning = false;
+}
+
+export async function sendSOS(lat: number | null, lon: number | null): Promise<void> {
+  if (!_myNodeId) {
+    if (lat !== null && lon !== null) {
+      _myNodeId = await generateNodeId(lat, lon);
+    } else {
+      _myNodeId = generateRandomId();
+    }
+  }
+  
+  const seqNo = Math.floor(Math.random() * 256);
+  const cacheKey = `${_myNodeId}-${seqNo}`;
+  seenCache.add(cacheKey);
+
+  const payload = encodePayload(MSG_SOS, 5, _myNodeId, BROADCAST_NODE_ID, seqNo);
+  await broadcastBlePayload(payload);
+
+  events.emit('SOS_SENT', {
+    nodeId: _myNodeId,
+    timestamp: Date.now()
+  });
+}
+
+async function sendAck(targetId: string): Promise<void> {
+  if (!_myNodeId) return;
+  const seqNo = Math.floor(Math.random() * 256);
+  const cacheKey = `${_myNodeId}-${seqNo}`;
+  seenCache.add(cacheKey);
+
+  const payload = encodePayload(MSG_ACK, 5, _myNodeId, targetId, seqNo);
+  await broadcastBlePayload(payload);
+}
+
+async function broadcastBlePayload(payloadBytes: number[]): Promise<void> {
   if (!_bleAvailable || !_BLEAdvertiser) return;
 
-  // Stop any prior advertisement
   if (_sosAdvertiseTimer) {
     clearTimeout(_sosAdvertiseTimer);
     _sosAdvertiseTimer = null;
@@ -200,133 +256,36 @@ async function _broadcastSOSViaBLE(message: string): Promise<void> {
   }
 
   try {
-    const payload = encodeSOSBytes(message);
-    await _BLEAdvertiser.broadcast(TOURSAFE_UUID, payload, {
-      advertiseMode: 2,           // ADVERTISE_MODE_LOW_LATENCY
-      txPowerLevel: 3,            // ADVERTISE_TX_POWER_HIGH
+    await _BLEAdvertiser.broadcast(TOURSAFE_UUID, payloadBytes, {
+      advertiseMode: 2,           
+      txPowerLevel: 3,            
       connectable: false,
       includeDeviceName: false,
       includeTxPowerLevel: false,
     });
-    console.log('📡 BLE SOS advertising started');
 
-    // Auto-stop after 60s to save battery
     _sosAdvertiseTimer = setTimeout(async () => {
       try { await _BLEAdvertiser.stopBroadcast(); } catch {}
-      console.log('📡 BLE advertising stopped (timeout)');
-    }, 60000);
+    }, 30000); // 30s broadcast
   } catch (e: any) {
     console.log('BLE broadcast error:', e?.message ?? e);
   }
 }
 
-// ── WebSocket relay (optional, WiFi) ─────────────────────
-
-export function connectToRelay(relayAddress: string): void {
-  _relayAddress = relayAddress;
-  _doWSConnect(relayAddress);
+export function getMyNodeId(): string | null {
+  return _myNodeId;
 }
 
-function _doWSConnect(relayAddress: string): void {
-  try {
-    if (ws) { ws.close(); ws = null; }
-    ws = new WebSocket(`ws://${relayAddress}`);
-
-    ws.onopen = () => {
-      _wsConnected = true;
-      _updateTransportMode();
-      console.log('✅ Relay connected');
-      const ping = setInterval(() => {
-        if (ws?.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'ping' }));
-        } else {
-          clearInterval(ping);
-        }
-      }, 15000);
-    };
-
-    ws.onmessage = (evt: MessageEvent) => {
-      try {
-        const msg = JSON.parse(evt.data);
-        if (msg.type === 'sos') {
-          const d = msg.data as SOSEvent;
-          if (!seen.has(d.emergencyId)) {
-            seen.add(d.emergencyId);
-            sosHandlers.forEach(h => h(d));
-          }
-        } else if (msg.type === 'sos_ack') {
-          sosAckHandlers.forEach(h => h(msg.peersNotified));
-        } else if (msg.type === 'peers' || msg.type === 'welcome') {
-          const count = msg.count ?? msg.peerCount ?? 0;
-          _peerCount = count;
-          peerCountHandlers.forEach(h => h(count));
-        }
-      } catch {}
-    };
-
-    ws.onclose = () => {
-      _wsConnected = false;
-      _updateTransportMode();
-      if (_relayAddress) {
-        reconnectTimer = setTimeout(() => _doWSConnect(_relayAddress!), 3000);
-      }
-    };
-
-    ws.onerror = () => {
-      _wsConnected = false;
-      _updateTransportMode();
-    };
-  } catch {}
+export async function setMyNodeId(lat: number, lon: number): Promise<void> {
+  _myNodeId = await generateNodeId(lat, lon);
 }
 
-function _updateTransportMode(): void {
-  if (_wsConnected && _bleAvailable) _transportMode = 'both';
-  else if (_bleAvailable)            _transportMode = 'ble';
-  else if (_wsConnected)             _transportMode = 'wifi';
-  else                               _transportMode = 'offline';
+export function getKBucketContacts(): Contact[] {
+  return bucket.getAll();
 }
 
-// ── Public API ────────────────────────────────────────────
-
-export async function sendSOS(message: string): Promise<void> {
-  const emergencyId = `sos-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-  const sosMsg: SOSEvent = {
-    type: 'SOS', emergencyId, originId: 'mobile-node',
-    message, ttl: 5, timestamp: Date.now(),
-  };
-  seen.add(emergencyId);
-
-  // 1. WebSocket relay (WiFi, if connected)
-  if (ws?.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(sosMsg));
-    console.log('📡 SOS → relay (WiFi)');
-  }
-
-  // 2. BLE advertisement (fully offline, P2P)
-  await _broadcastSOSViaBLE(message);
-}
-
-export function onSOS(handler: SOSHandler): void     { sosHandlers.push(handler); }
-export function onPeerCount(h: PeerCountHandler): void { peerCountHandlers.push(h); }
-export function onSosAck(h: SosAckHandler): void       { sosAckHandlers.push(h); }
-
-export function isConnected():      boolean       { return _wsConnected; }
-export function isBLEAvailable():   boolean       { return _bleAvailable; }
-export function getPeerCount():     number        { return _peerCount; }
-export function getTransportMode(): TransportMode { return _transportMode; }
-
-export function disconnect(): void {
-  if (reconnectTimer) clearTimeout(reconnectTimer);
-  _relayAddress = null;
-  if (ws) { ws.close(); ws = null; }
-  _wsConnected = false;
-  _bleManager?.stopDeviceScan();
-  _bleScanning = false;
-  _updateTransportMode();
-}
+export const GeoKadEvents = events;
 
 export default {
-  initBLE, connectToRelay, sendSOS, disconnect,
-  onSOS, onPeerCount, onSosAck,
-  isConnected, isBLEAvailable, getPeerCount, getTransportMode,
+  initBLE, startListening, stopListening, sendSOS, getMyNodeId, setMyNodeId, getKBucketContacts, GeoKadEvents
 };

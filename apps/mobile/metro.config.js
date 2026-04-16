@@ -7,17 +7,17 @@ const workspaceRoot = path.resolve(projectRoot, '../..');
 
 const config = getDefaultConfig(projectRoot);
 
-// 1. Watch all files within the monorepo
 config.watchFolders = [workspaceRoot];
 
-// 2. Let Metro know where to resolve packages and in what order
 config.resolver.nodeModulesPaths = [
   path.resolve(projectRoot, 'node_modules'),
   path.resolve(workspaceRoot, 'node_modules'),
 ];
 
-// 3. Force Metro to resolve (sub)dependencies only from the `nodeModulesPaths`
-// This perfectly forces React instances to unify gracefully rather than duplicating via tree crawling
-config.resolver.disableHierarchicalLookup = true;
+// REMOVED: disableHierarchicalLookup: true
+// This was causing babel to load react-native-worklets from root
+// node_modules AND react-native-reanimated/plugin from apps/mobile
+// node_modules simultaneously, triggering the duplicate plugin error.
+// Metro's default hierarchical lookup correctly deduplicates them.
 
 module.exports = withNativeWind(config, { input: './global.css' });
