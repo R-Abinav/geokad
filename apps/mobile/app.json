@@ -47,6 +47,12 @@
       "expo-font",
       "expo-router",
       [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow TourSafe to access your camera to scan trip QR codes."
+        }
+      ],
+      [
         "react-native-ble-plx",
         {
           "isBackgroundEnabled": false,

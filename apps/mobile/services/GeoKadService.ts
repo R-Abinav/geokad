@@ -22,8 +22,19 @@ let _bleManager: any = null;
 let _BLEAdvertiser: any = null;
 let _bleAvailable = false;
 let _bleScanning = false;
+let _bleAdvertising = false;
 let _sosAdvertiseTimer: ReturnType<typeof setTimeout> | null = null;
 let _myNodeId: string | null = null;
+
+// Mesh namespace key — gates which trip's BLE traffic we accept
+let _meshKey: string = 'default';
+
+export function setMeshKey(key: string): void {
+  _meshKey = key;
+}
+
+// Re-export for TripStore
+export { generateRandomId as generateNodeIdFromRandom } from './GeoHash';
 
 const events = new EventEmitter();
 const bucket = new KBucket(3);
@@ -44,10 +55,13 @@ function bytesToHex(bytes: Uint8Array | number[]): string {
 }
 
 // Encode Payload
+// byte[1] = TTL XOR'd with first byte of meshKey hex — lightweight namespace tagging
 function encodePayload(type: number, ttl: number, senderIdHex: string, targetIdHex: string, seqNo: number): number[] {
   const bytes = new Uint8Array(20);
   bytes[0] = type;
-  bytes[1] = ttl;
+  // Embed meshKey into TTL byte via XOR so receivers can namespace-check without extra bytes
+  const meshKeyByte = parseInt(_meshKey.substring(0, 2), 16) || 0;
+  bytes[1] = ttl ^ meshKeyByte;
   const senderBytes = hexToBytes(senderIdHex);
   const targetBytes = hexToBytes(targetIdHex);
   bytes.set(senderBytes, 2);
@@ -80,9 +94,21 @@ function decodeManufacturerData(b64: string): any {
     for (let i = 0; i < 19; i++) checksum ^= payload[i];
     if (checksum !== payload[19]) return null; // Invalid Checksum
 
+    // Validate mesh namespace — reverse the XOR on byte[1] to recover TTL and meshKey
+    const meshKeyByte = parseInt(_meshKey.substring(0, 2), 16) || 0;
+    const decodedMeshByte = payload[1] ^ meshKeyByte; // should give original TTL (1-5)
+    // If using a non-default meshKey, filter out packets from other trips:
+    // a valid TTL is 1–5; if the decoded TTL is out of range the packet belongs to another trip
+    if (_meshKey !== 'default') {
+      if (decodedMeshByte < 1 || decodedMeshByte > 5) {
+        return null; // Belongs to a different trip namespace — silently discard
+      }
+    }
+    const ttl = decodedMeshByte;
+
     return {
       type: payload[0],
-      ttl: payload[1],
+      ttl,
       senderId: bytesToHex(payload.slice(2, 10)),
       targetId: bytesToHex(payload.slice(10, 18)),
       seqNo: payload[18],
@@ -214,6 +240,46 @@ export function stopListening(): void {
   _bleScanning = false;
 }
 
+/**
+ * Start a persistent BLE advertisement beacon for trip presence.
+ * This is separate from the per-message broadcast used by sendSOS.
+ */
+export async function startAdvertising(): Promise<void> {
+  if (!_bleAvailable || !_BLEAdvertiser || _bleAdvertising) return;
+  if (!_myNodeId) {
+    const { generateRandomId } = require('./GeoHash');
+    _myNodeId = generateRandomId();
+  }
+  const seqNo = Math.floor(Math.random() * 256);
+  const cacheKey = `${_myNodeId}-${seqNo}`;
+  seenCache.add(cacheKey);
+  const payload = encodePayload(MSG_RELAY, 1, _myNodeId!, BROADCAST_NODE_ID, seqNo);
+  try {
+    await _BLEAdvertiser.broadcast(TOURSAFE_UUID, payload, {
+      advertiseMode: 1,
+      txPowerLevel: 2,
+      connectable: false,
+      includeDeviceName: false,
+      includeTxPowerLevel: false,
+    });
+    _bleAdvertising = true;
+    console.log('✅ BLE advertising started (trip beacon)');
+  } catch (e: any) {
+    console.log('BLE startAdvertising error:', e?.message ?? e);
+  }
+}
+
+export async function stopAdvertising(): Promise<void> {
+  if (!_BLEAdvertiser || !_bleAdvertising) return;
+  try {
+    await _BLEAdvertiser.stopBroadcast();
+    _bleAdvertising = false;
+    console.log('🛑 BLE advertising stopped');
+  } catch (e: any) {
+    console.log('BLE stopAdvertising error:', e?.message ?? e);
+  }
+}
+
 export async function sendSOS(lat: number | null, lon: number | null): Promise<void> {
   if (!_myNodeId) {
     if (lat !== null && lon !== null) {
@@ -287,5 +353,15 @@ export function getKBucketContacts(): Contact[] {
 export const GeoKadEvents = events;
 
 export default {
-  initBLE, startListening, stopListening, sendSOS, getMyNodeId, setMyNodeId, getKBucketContacts, GeoKadEvents
+  initBLE,
+  startListening,
+  stopListening,
+  startAdvertising,
+  stopAdvertising,
+  sendSOS,
+  getMyNodeId,
+  setMyNodeId,
+  setMeshKey,
+  getKBucketContacts,
+  GeoKadEvents,
 };

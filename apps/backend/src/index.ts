@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import tripsRouter from './routes/trips';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -17,6 +18,7 @@ app.get('/health', (req, res) => {
 });
 
 //other routes
+app.use(`${API_PREFIX}/trips`, tripsRouter);
 
 
 app.listen(PORT, () => {
