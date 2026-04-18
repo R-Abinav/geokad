@@ -1,12 +1,12 @@
 {
   "expo": {
     "name": "TourSafe",
-    "slug": "toursafe",
+    "slug": "mobile",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "scheme": "toursafe",
     "splash": {
       "image": "./assets/splash-icon.png",
@@ -49,9 +49,10 @@
       [
         "react-native-ble-plx",
         {
-          "isBackgroundEnabled": false,
-          "modes": [],
-          "bluetoothAlwaysPermission": "Allow TourSafe to use Bluetooth to communicate with nearby peers"
+          "isBackgroundEnabled": true,
+          "modes": ["peripheral", "central"],
+          "bluetoothAlwaysPermission": "Allow TourSafe to use Bluetooth to communicate with nearby peers in emergencies",
+          "neverForLocation": false
         }
       ]
     ],

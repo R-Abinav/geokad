@@ -13,18 +13,16 @@ import {
 } from '@expo-google-fonts/cormorant';
 import { View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState } from 'react';
 import IntroAnimation from '../components/IntroAnimation';
 import { useSosStore } from '../store/useSosStore';
-import { initBLE } from '../services/GeoKadService';
 import '../global.css';
 
+// NOTE: initBLE() is called in app/(tabs)/index.tsx AFTER event listeners
+// are registered. Do NOT call it here — it would fire BLE_READY before any
+// listener is attached, permanently leaving the UI stuck at "initializing".
 
 export default function RootLayout() {
-  useEffect(() => {
-    // Start BLE first — works completely offline, P2P
-    initBLE();
-  }, []);
 
   const [fontsLoaded] = useFonts({
     Inter_400Regular,
